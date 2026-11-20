@@ -12,20 +12,28 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 from pathlib import Path
 
+import environ
+from corsheaders.defaults import default_headers
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+env = environ.Env(DEBUG=(bool, True))
+environ.Env.read_env(str(BASE_DIR / ".env"))
+DEBUG = env.bool("DEBUG", default=True)
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-1^n4ekkp$)#r^4%e+eq0xk418nw=ou!b)uf1*&ln4kngo(@l&$'
+# Use a development-only key locally; production must provide SECRET_KEY.
+SECRET_KEY = (
+    env("SECRET_KEY", default="django-insecure-local-development-only")
+    if DEBUG
+    else env("SECRET_KEY")
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'meetula-be.onrender.com']
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'meetula-be.onrender.com', '192.168.1']
 
 
 # Application definition
@@ -38,10 +46,11 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'corsheaders',
-    'events',
+    'posts',
     'rest_framework',
     'authentication',
-    'group'
+    'communities',
+    'notifications',
 ]
 
 MIDDLEWARE = [
@@ -82,60 +91,46 @@ CORS_ALLOWED_ORIGINS = [
     "https://eventsbit-ebon.vercel.app",
     "https://sub.example.com",
     "http://localhost:3000",
+    "http://192.168.1.3:3000",
     "http://127.0.0.1:9000",
 ]
+CORS_ALLOW_HEADERS = [*default_headers, "x-development-user"]
 
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+ENABLE_DEV_ANONYMOUS_USER = env.bool("ENABLE_DEV_ANONYMOUS_USER", default=False)
+
+DATABASE_URL = env("DATABASE_URL", default="")
+USE_DATABASE_URL = env.bool("USE_DATABASE_URL", default=False)
+if not DEBUG or USE_DATABASE_URL:
+    if not DATABASE_URL:
+        raise environ.ImproperlyConfigured(
+            "Set DATABASE_URL when DEBUG is false or USE_DATABASE_URL is true."
+        )
+
+    import dj_database_url
+
+    DATABASES = {
+        "default": dj_database_url.config(
+            default=DATABASE_URL,
+            conn_max_age=600,
+            conn_health_checks=True,
+            ssl_require=not DEBUG,
+        )
     }
-}
-
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'postgres',  # Your database name
-        'USER': 'postgres.sffemxvvanwvqtbpmhkh',   # Your database username
-        'PASSWORD': 'piPtU4T1yhM5WnHi',  # Your database password
-        'HOST': 'aws-0-eu-central-1.pooler.supabase.com',  # Database host
-        'PORT': '5432',       # Database port (default is 5432)
-        'transaction': 'transaction'
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
     }
-}
-
-import environ
-import os
-
-env = environ.Env(
-    # set casting, default value
-    DEBUG=(bool, False)
-)
-
-# Set the project base directory
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-# Take environment variables from .env file
-environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
-
-# import dj_database_url
-
-# DATABASES = {
-#     'default': dj_database_url.config(
-#         default=env("DATABASE_URL"),
-#         conn_max_age=600,
-#         ssl_require=True,  # Explicitly require SSL for Render.com
-#         conn_health_checks=True,
-        
-#     )
-# }
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
+        "authentication.auth.DevelopmentUserAuthentication",
         "authentication.auth.ClerkAuthentication",
         'rest_framework.authentication.SessionAuthentication',
     ],
@@ -170,11 +165,11 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-CLERK_API_KEY = env("CLERK_API_KEY")  # replace with your full key
-CLERK_API_BASE_URL = env("CLERK_API_BASE_URL")
+CLERK_API_KEY = env("CLERK_API_KEY", default="")
+CLERK_API_BASE_URL = env("CLERK_API_BASE_URL", default="")
 
-CLERK_ISSUER_URL = env("CLERK_ISSUER_URL")
-CLERK_JWKS_URL = f"{CLERK_ISSUER_URL}/.well-known/jwks.json"
+CLERK_ISSUER_URL = env("CLERK_ISSUER_URL", default="")
+CLERK_JWKS_URL = f"{CLERK_ISSUER_URL}/.well-known/jwks.json" if CLERK_ISSUER_URL else ""
 CLERK_AUDIENCE = "http://localhost:3000"
 
 
@@ -200,9 +195,9 @@ import cloudinary.uploader
 import cloudinary.api
 
 cloudinary.config(
-    cloud_name=env('CLOUD_NAME'),
-    api_key=env('API_KEY'),
-    api_secret=env('API_SECRET')
+    cloud_name=env('CLOUD_NAME', default=''),
+    api_key=env('API_KEY', default=''),
+    api_secret=env('API_SECRET', default='')
 ) 
 
 # Default primary key field type
