@@ -210,6 +210,38 @@ class CommunityViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
+    @action(detail=True, methods=["post"], url_path="transfer-ownership")
+    def transfer_ownership(self, request, slug=None):
+        community = self.get_object()
+        user_id = request.data.get("user_id")
+        if not user_id:
+            return Response(
+                {"detail": "user_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user_id = serializers.IntegerField(min_value=1).run_validation(user_id)
+        new_owner = community.members.filter(pk=user_id).first()
+        if new_owner is None:
+            return Response(
+                {"detail": "Ownership can only be transferred to a community member."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if new_owner.pk == community.owner_id:
+            return Response(
+                {"detail": "This user is already the community owner."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            community.owner = new_owner
+            community.save(update_fields=["owner"])
+            community.moderators.remove(request.user)
+            community.moderators.add(new_owner)
+
+        return Response(self.get_serializer(community).data)
+
     @action(detail=True, methods=["post", "delete"])
     def moderators(self, request, slug=None):
         community = self.get_object()

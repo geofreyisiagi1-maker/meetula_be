@@ -14,7 +14,7 @@ from .models import Comment, Post, Reply
 class PostApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.user = User.objects.create_user(username="clerk-user")
+        self.user = User.objects.create_user(username="post-author")
         self.client.force_authenticate(user=self.user)
         self.community = Community.objects.create(
             name="Developers",
@@ -44,13 +44,16 @@ class PostApiTests(TestCase):
         self.assertEqual(response.data["images"], [])
 
     def test_authors_can_edit_posts_comments_and_replies(self):
+        author = User.objects.create_user(username="content-author")
+        self.community.members.add(author)
         post = Post.objects.create(
             community=self.community,
-            author=self.user,
+            author=author,
             post_type="discussion",
             title="Original post",
             content="Original content",
         )
+        self.client.force_authenticate(user=author)
         response = self.client.patch(
             reverse("post-detail", args=[post.slug]),
             {"title": "Edited post", "content": "Edited content"},
@@ -62,7 +65,7 @@ class PostApiTests(TestCase):
 
         comment = Comment.objects.create(
             post=post,
-            author=self.user,
+            author=author,
             content="Original comment",
         )
         response = self.client.patch(
@@ -76,7 +79,7 @@ class PostApiTests(TestCase):
 
         reply = Reply.objects.create(
             comment=comment,
-            author=self.user,
+            author=author,
             content="Original reply",
         )
         response = self.client.patch(
@@ -87,6 +90,197 @@ class PostApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         reply.refresh_from_db()
         self.assertEqual(reply.content, "Edited reply")
+
+    def test_non_author_cannot_edit_posts_comments_or_replies(self):
+        author = User.objects.create_user(username="content-author")
+        outsider = User.objects.create_user(username="content-outsider")
+        self.community.members.add(author, outsider)
+        post = Post.objects.create(
+            community=self.community,
+            author=author,
+            post_type="discussion",
+            title="Original post",
+            content="Original content",
+        )
+        comment = Comment.objects.create(
+            post=post,
+            author=author,
+            content="Original comment",
+        )
+        reply = Reply.objects.create(
+            comment=comment,
+            author=author,
+            content="Original reply",
+        )
+        self.client.force_authenticate(user=outsider)
+
+        post_response = self.client.patch(
+            reverse("post-detail", args=[post.slug]),
+            {"title": "Changed"},
+            format="json",
+        )
+        comment_response = self.client.patch(
+            reverse("comment-detail", args=[comment.pk]),
+            {"content": "Changed"},
+            format="json",
+        )
+        reply_response = self.client.patch(
+            reverse("reply-detail", args=[reply.pk]),
+            {"content": "Changed"},
+            format="json",
+        )
+
+        self.assertEqual(post_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(comment_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(reply_response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_question_author_can_accept_replace_and_unaccept_one_answer(self):
+        question_author = User.objects.create_user(username="question-author")
+        self.community.members.add(question_author)
+        self.client.force_authenticate(user=question_author)
+        post = Post.objects.create(
+            community=self.community,
+            author=question_author,
+            post_type="question",
+            title="Question",
+            content="Question content",
+        )
+        first_answer = Comment.objects.create(
+            post=post,
+            author=self.user,
+            content="First answer",
+        )
+        second_answer = Comment.objects.create(
+            post=post,
+            author=self.user,
+            content="Second answer",
+        )
+        url = reverse("post-accept-answer", args=[post.slug])
+
+        response = self.client.post(
+            url,
+            {"comment_id": first_answer.pk},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["accepted_answer"], first_answer.pk)
+        self.assertTrue(response.data["is_answered"])
+        post.refresh_from_db()
+        self.assertEqual(post.accepted_answer, first_answer)
+
+        detail = self.client.get(reverse("post-detail", args=[post.slug]))
+        self.assertEqual(detail.data["accepted_answer"], first_answer.pk)
+        self.assertTrue(detail.data["is_answered"])
+        self.assertTrue(
+            next(
+                comment["is_accepted_answer"]
+                for comment in detail.data["comments"]
+                if comment["id"] == first_answer.pk
+            )
+        )
+
+        response = self.client.post(
+            url,
+            {"comment_id": second_answer.pk},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["accepted_answer"], second_answer.pk)
+
+        other_post = Post.objects.create(
+            community=self.community,
+            author=self.user,
+            post_type="question",
+            title="Another question",
+            content="Another question",
+        )
+        unrelated_comment = Comment.objects.create(
+            post=other_post,
+            author=self.user,
+            content="Unrelated answer",
+        )
+        response = self.client.post(
+            url,
+            {"comment_id": unrelated_comment.pk},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        post.refresh_from_db()
+        self.assertEqual(post.accepted_answer, second_answer)
+
+        response = self.client.delete(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNone(response.data["accepted_answer"])
+        self.assertFalse(response.data["is_answered"])
+
+    def test_only_question_author_can_accept_an_answer(self):
+        other_user = User.objects.create_user(username="another-user")
+        post = Post.objects.create(
+            community=self.community,
+            author=other_user,
+            post_type="question",
+            title="Question",
+            content="Question content",
+        )
+        answer = Comment.objects.create(
+            post=post,
+            author=self.user,
+            content="Answer",
+        )
+
+        response = self.client.post(
+            reverse("post-accept-answer", args=[post.slug]),
+            {"comment_id": answer.pk},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        post.refresh_from_db()
+        self.assertIsNone(post.accepted_answer)
+
+    def test_discussion_cannot_accept_an_answer(self):
+        post = Post.objects.create(
+            community=self.community,
+            author=self.user,
+            post_type="discussion",
+            title="Discussion",
+            content="Discussion content",
+        )
+
+        response = self.client.post(
+            reverse("post-accept-answer", args=[post.slug]),
+            {"comment_id": "1"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_changing_question_to_discussion_clears_accepted_answer(self):
+        post = Post.objects.create(
+            community=self.community,
+            author=self.user,
+            post_type="question",
+            title="Question",
+            content="Question content",
+        )
+        answer = Comment.objects.create(
+            post=post,
+            author=self.user,
+            content="Answer",
+        )
+        post.accepted_answer = answer
+        post.save(update_fields=["accepted_answer"])
+
+        response = self.client.patch(
+            reverse("post-detail", args=[post.slug]),
+            {"post_type": "discussion"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        post.refresh_from_db()
+        self.assertIsNone(post.accepted_answer)
+        self.assertFalse(response.data["is_answered"])
 
     def test_post_type_must_be_discussion_or_question(self):
         response = self.client.post(

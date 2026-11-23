@@ -45,12 +45,23 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.sites',
     'corsheaders',
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
+    'allauth.socialaccount.providers.google',
     'posts',
     'rest_framework',
+    'rest_framework.authtoken',
     'authentication',
     'communities',
     'notifications',
+]
+
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+    "allauth.account.auth_backends.AuthenticationBackend",
 ]
 
 MIDDLEWARE = [
@@ -61,6 +72,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'allauth.account.middleware.AccountMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -130,8 +142,8 @@ else:
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.TokenAuthentication",
         "authentication.auth.DevelopmentUserAuthentication",
-        "authentication.auth.ClerkAuthentication",
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
@@ -145,6 +157,51 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
     ],
 }
+
+SITE_ID = 1
+LOGIN_REDIRECT_URL = "/api/auth/google/complete/"
+FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:3000")
+ACCOUNT_LOGIN_METHODS = {"email"}
+ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
+ACCOUNT_EMAIL_VERIFICATION = "mandatory"
+ACCOUNT_EMAIL_CONFIRMATION_ANONYMOUS_REDIRECT_URL = (
+    f"{FRONTEND_URL.rstrip('/')}/login?verified=1"
+)
+ACCOUNT_UNIQUE_EMAIL = True
+SOCIALACCOUNT_LOGIN_ON_GET = True
+SOCIALACCOUNT_AUTO_SIGNUP = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
+
+EMAIL_BACKEND = env(
+    "EMAIL_BACKEND",
+    default=(
+        "django.core.mail.backends.console.EmailBackend"
+        if DEBUG
+        else "django.core.mail.backends.smtp.EmailBackend"
+    ),
+)
+EMAIL_HOST = env("EMAIL_HOST", default="")
+EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@meetula.com")
+
+google_client_id = env("GOOGLE_CLIENT_ID", default="")
+google_client_secret = env("GOOGLE_CLIENT_SECRET", default="")
+if google_client_id and google_client_secret:
+    SOCIALACCOUNT_PROVIDERS = {
+        "google": {
+            "APP": {
+                "client_id": google_client_id,
+                "secret": google_client_secret,
+                "key": "",
+            },
+            "SCOPE": ["profile", "email"],
+            "AUTH_PARAMS": {"prompt": "select_account"},
+        }
+    }
 
 
 # Password validation
@@ -164,14 +221,6 @@ AUTH_PASSWORD_VALIDATORS = [
         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
     },
 ]
-
-CLERK_API_KEY = env("CLERK_API_KEY", default="")
-CLERK_API_BASE_URL = env("CLERK_API_BASE_URL", default="")
-
-CLERK_ISSUER_URL = env("CLERK_ISSUER_URL", default="")
-CLERK_JWKS_URL = f"{CLERK_ISSUER_URL}/.well-known/jwks.json" if CLERK_ISSUER_URL else ""
-CLERK_AUDIENCE = "http://localhost:3000"
-
 
 # Internationalization
 # https://docs.djangoproject.com/en/4.2/topics/i18n/

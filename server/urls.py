@@ -21,6 +21,7 @@ from django.conf import settings
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('accounts/', include('allauth.urls')),
     path('api/', include('posts.urls')),
     path('api/', include('communities.urls')),
     path('api/', include('notifications.urls')),

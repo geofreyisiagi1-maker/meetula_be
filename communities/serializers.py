@@ -7,14 +7,11 @@ from .models import Community
 
 
 class UserSerializer(serializers.ModelSerializer):
-    clerk_id = serializers.SerializerMethodField()
+    username = serializers.CharField(source="profile.username", read_only=True)
 
     class Meta:
         model = User
-        fields = ["id", "username", "email", "first_name", "last_name", "clerk_id"]
-
-    def get_clerk_id(self, obj):
-        return obj.username
+        fields = ["id", "username", "email", "first_name", "last_name"]
 
 
 class CommunitySerializer(serializers.ModelSerializer):
@@ -80,4 +77,5 @@ class CommunitySerializer(serializers.ModelSerializer):
         user = self.context["request"].user
         community = Community.objects.create(owner=user, **validated_data)
         community.members.add(user)
+        community.moderators.add(user)
         return community

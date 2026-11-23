@@ -48,6 +48,8 @@ class PostImageSerializer(serializers.ModelSerializer):
 class PostSerializer(VoteSummarySerializerMixin, serializers.ModelSerializer):
     author = UserSerializer(read_only=True)
     comment_count = serializers.IntegerField(source="comments.count", read_only=True)
+    accepted_answer = serializers.PrimaryKeyRelatedField(read_only=True)
+    is_answered = serializers.SerializerMethodField()
     upvotes = serializers.SerializerMethodField()
     downvotes = serializers.SerializerMethodField()
     score = serializers.SerializerMethodField()
@@ -82,8 +84,13 @@ class PostSerializer(VoteSummarySerializerMixin, serializers.ModelSerializer):
             "score",
             "my_vote",
             "comment_count",
+            "accepted_answer",
+            "is_answered",
         ]
         read_only_fields = ["slug", "created_at", "updated_at"]
+
+    def get_is_answered(self, obj):
+        return obj.post_type == "question" and obj.accepted_answer_id is not None
 
     def create(self, validated_data):
         images = validated_data.pop("uploaded_images", [])
@@ -94,6 +101,8 @@ class PostSerializer(VoteSummarySerializerMixin, serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         images = validated_data.pop("uploaded_images", [])
+        if validated_data.get("post_type", instance.post_type) != "question":
+            instance.accepted_answer = None
         instance = super().update(instance, validated_data)
         for image in images:
             PostImage.objects.create(post=instance, image=image)
@@ -103,6 +112,7 @@ class PostSerializer(VoteSummarySerializerMixin, serializers.ModelSerializer):
 class CommentSerializer(VoteSummarySerializerMixin, serializers.ModelSerializer):
     author = UserSerializer(read_only=True)
     replies = serializers.SerializerMethodField()
+    is_accepted_answer = serializers.SerializerMethodField()
     upvotes = serializers.SerializerMethodField()
     downvotes = serializers.SerializerMethodField()
     score = serializers.SerializerMethodField()
@@ -117,6 +127,7 @@ class CommentSerializer(VoteSummarySerializerMixin, serializers.ModelSerializer)
             "image",
             "author",
             "replies",
+            "is_accepted_answer",
             "upvotes",
             "downvotes",
             "score",
@@ -129,6 +140,11 @@ class CommentSerializer(VoteSummarySerializerMixin, serializers.ModelSerializer)
     def get_replies(self, obj):
         roots = obj.replies.filter(parent_reply__isnull=True)
         return ReplySerializer(roots, many=True, context=self.context).data
+
+    def get_is_accepted_answer(self, obj):
+        if "accepted_answer_id" in self.context:
+            return self.context["accepted_answer_id"] == obj.pk
+        return obj.post.accepted_answer_id == obj.pk
 
 
 class ReplySerializer(VoteSummarySerializerMixin, serializers.ModelSerializer):
@@ -199,5 +215,8 @@ class PostDetailSerializer(PostSerializer):
         return CommentSerializer(
             obj.comments.all(),
             many=True,
-            context=self.context,
+            context={
+                **self.context,
+                "accepted_answer_id": obj.accepted_answer_id,
+            },
         ).data

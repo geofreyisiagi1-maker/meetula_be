@@ -27,6 +27,13 @@ class Post(models.Model):
         on_delete=models.CASCADE,
         related_name="posts",
     )
+    accepted_answer = models.ForeignKey(
+        "Comment",
+        on_delete=models.SET_NULL,
+        related_name="accepted_for_posts",
+        blank=True,
+        null=True,
+    )
     votes = GenericRelation("posts.Vote", related_query_name="post")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

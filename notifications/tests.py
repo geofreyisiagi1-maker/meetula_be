@@ -180,11 +180,20 @@ class NotificationApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(
-            Notification.objects.filter(
-                recipient=applicant,
-                notification_type=Notification.JOIN_REQUEST_DECISION,
-            ).exists()
+        decision_notification = Notification.objects.get(
+            recipient=applicant,
+            notification_type=Notification.JOIN_REQUEST_DECISION,
+        )
+        self.client.force_authenticate(user=applicant)
+        notification_response = self.client.get(reverse("notification-list"))
+        self.assertEqual(notification_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            next(
+                item["target_url"]
+                for item in notification_response.data["results"]
+                if item["id"] == decision_notification.pk
+            ),
+            "/c/notifications",
         )
 
     def test_notifications_are_private_and_can_be_marked_read(self):
@@ -207,6 +216,7 @@ class NotificationApiTests(TestCase):
         self.assertEqual(len(response.data["results"]), 1)
         self.assertEqual(response.data["results"][0]["target_type"], "post")
         self.assertEqual(response.data["results"][0]["target_id"], self.post.pk)
+        self.assertEqual(response.data["results"][0]["target_url"], f"/post/{self.post.slug}")
 
         response = self.client.get(reverse("notification-unread-count"))
         self.assertEqual(response.data["unread_count"], 1)
@@ -219,3 +229,44 @@ class NotificationApiTests(TestCase):
 
         response = self.client.post(reverse("notification-read-all"))
         self.assertEqual(response.data["marked_read"], 0)
+
+    def test_comment_and_reply_notifications_link_to_their_post(self):
+        comment = Comment.objects.create(
+            post=self.post,
+            author=self.owner,
+            content="A comment",
+        )
+        reply = Reply.objects.create(
+            comment=comment,
+            author=self.owner,
+            content="A reply",
+        )
+        comment_notification = Notification.objects.create(
+            recipient=self.actor,
+            actor=self.owner,
+            notification_type=Notification.COMMENT_REPLY,
+            message="Someone replied to your comment.",
+            target=comment,
+        )
+        reply_notification = Notification.objects.create(
+            recipient=self.actor,
+            actor=self.owner,
+            notification_type=Notification.REPLY_REPLY,
+            message="Someone replied to your reply.",
+            target=reply,
+        )
+
+        response = self.client.get(reverse("notification-list"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        notifications_by_id = {
+            str(item["id"]): item for item in response.data["results"]
+        }
+        self.assertEqual(
+            notifications_by_id[str(comment_notification.pk)]["target_url"],
+            f"/post/{self.post.slug}",
+        )
+        self.assertEqual(
+            notifications_by_id[str(reply_notification.pk)]["target_url"],
+            f"/post/{self.post.slug}",
+        )

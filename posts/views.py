@@ -187,6 +187,40 @@ class PostViewSet(viewsets.ModelViewSet):
     def vote(self, request, slug=None):
         return set_vote(request, self.get_object())
 
+    @action(
+        detail=True,
+        methods=["post", "delete"],
+        url_path="accept-answer",
+        permission_classes=[permissions.IsAuthenticated],
+    )
+    def accept_answer(self, request, slug=None):
+        post = self.get_object()
+        if post.author_id != request.user.pk:
+            raise PermissionDenied("Only the question author can accept an answer.")
+        if post.post_type != "question":
+            return Response(
+                {"detail": "Answers can only be accepted on question posts."},
+                status=400,
+            )
+
+        if request.method == "DELETE":
+            post.accepted_answer = None
+        else:
+            comment_id = request.data.get("comment_id")
+            answer = Comment.objects.filter(pk=comment_id, post=post).first()
+            if answer is None:
+                return Response(
+                    {"detail": "Choose a comment on this question as the answer."},
+                    status=400,
+                )
+            post.accepted_answer = answer
+
+        post.save(update_fields=["accepted_answer"])
+        return Response({
+            "accepted_answer": post.accepted_answer_id,
+            "is_answered": post.accepted_answer_id is not None,
+        })
+
 
 class CommentViewSet(viewsets.ModelViewSet):
     queryset = Comment.objects.select_related("post__community", "author").prefetch_related(
