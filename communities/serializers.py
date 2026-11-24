@@ -11,10 +11,11 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["id", "username", "email", "first_name", "last_name"]
+        fields = ["id", "username"]
 
 
 class CommunitySerializer(serializers.ModelSerializer):
+    description = serializers.CharField(trim_whitespace=False)
     slug = serializers.ReadOnlyField()
     owner = UserSerializer(read_only=True)
     members = UserSerializer(many=True, read_only=True)
@@ -41,6 +42,7 @@ class CommunitySerializer(serializers.ModelSerializer):
             "rules",
             "category",
             "visibility",
+            "join_policy",
             "profile_image",
             "cover_image",
             "member_count",
@@ -72,6 +74,31 @@ class CommunitySerializer(serializers.ModelSerializer):
         if communities.exists():
             raise serializers.ValidationError("This community URL is already in use.")
         return normalized
+
+    def validate(self, attrs):
+        visibility = attrs.get(
+            "visibility",
+            self.instance.visibility if self.instance is not None else "public",
+        )
+        join_policy = attrs.get(
+            "join_policy",
+            self.instance.join_policy if self.instance is not None else None,
+        )
+
+        if join_policy is None or (
+            "join_policy" not in attrs
+            and visibility == "private"
+            and self.instance is not None
+            and self.instance.visibility != "private"
+        ):
+            join_policy = "approval" if visibility == "private" else "open"
+            attrs["join_policy"] = join_policy
+        elif visibility == "private" and join_policy != "approval":
+            raise serializers.ValidationError({
+                "join_policy": "Private communities require approval to join."
+            })
+
+        return attrs
 
     def create(self, validated_data):
         user = self.context["request"].user

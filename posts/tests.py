@@ -43,6 +43,85 @@ class PostApiTests(TestCase):
         self.assertEqual(post.community, self.community)
         self.assertEqual(response.data["images"], [])
 
+    def test_multiline_content_is_preserved_when_created_edited_and_retrieved(self):
+        post_content = "\nFirst paragraph.\n\nSecond paragraph.\n"
+        response = self.client.post(
+            reverse("post-list"),
+            {
+                "community": self.community.pk,
+                "post_type": "discussion",
+                "title": "Multiline post",
+                "content": post_content,
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        post = Post.objects.get()
+        self.assertEqual(post.content, post_content)
+        self.assertEqual(response.data["content"], post_content)
+
+        updated_post_content = "Updated first paragraph.\n\nUpdated second paragraph."
+        response = self.client.patch(
+            reverse("post-detail", args=[post.slug]),
+            {"content": updated_post_content},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        post.refresh_from_db()
+        self.assertEqual(post.content, updated_post_content)
+        self.assertEqual(
+            self.client.get(reverse("post-detail", args=[post.slug])).data["content"],
+            updated_post_content,
+        )
+
+        comment_content = "\nComment first paragraph.\n\nComment second paragraph.\n"
+        response = self.client.post(
+            reverse("comment-list"),
+            {"post": post.pk, "content": comment_content},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        comment = Comment.objects.get()
+        self.assertEqual(comment.content, comment_content)
+
+        reply_content = "\nReply first paragraph.\n\nReply second paragraph.\n"
+        response = self.client.post(
+            reverse("reply-list"),
+            {"comment": comment.pk, "content": reply_content},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        reply = Reply.objects.get()
+        self.assertEqual(reply.content, reply_content)
+
+        updated_comment_content = "Edited comment.\n\nWith a second paragraph."
+        response = self.client.patch(
+            reverse("comment-detail", args=[comment.pk]),
+            {"content": updated_comment_content},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        comment.refresh_from_db()
+        self.assertEqual(comment.content, updated_comment_content)
+        self.assertEqual(
+            self.client.get(reverse("comment-detail", args=[comment.pk])).data["content"],
+            updated_comment_content,
+        )
+
+        updated_reply_content = "Edited reply.\n\nWith a second paragraph."
+        response = self.client.patch(
+            reverse("reply-detail", args=[reply.pk]),
+            {"content": updated_reply_content},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        reply.refresh_from_db()
+        self.assertEqual(reply.content, updated_reply_content)
+        self.assertEqual(
+            self.client.get(reverse("reply-detail", args=[reply.pk])).data["content"],
+            updated_reply_content,
+        )
+
     def test_authors_can_edit_posts_comments_and_replies(self):
         author = User.objects.create_user(username="content-author")
         self.community.members.add(author)

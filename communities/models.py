@@ -6,11 +6,17 @@ from cloudinary.models import CloudinaryField
 class Community(models.Model):
     CATEGORY_CHOICES = [
         ("TECH", "Technology"),
+        ("SPORTS", "Sports"),
+        ("NEWS", "News"),
+        ("CULTURE", "Culture"),
+        ("BUSINESS", "Business"),
+        ("ENTERTAINMENT", "Entertainment"),
+        ("LIFESTYLE", "Lifestyle"),
+        ("SOCIAL", "Social"),
+        ("PROFESSIONAL", "Professional"),
+        ("HOBBY", "Hobbies & Interests"),
         ("HEALTH", "Health & Wellness"),
         ("EDUCATION", "Education"),
-        ("SOCIAL", "Social"),
-        ("HOBBY", "Hobbies & Interests"),
-        ("PROFESSIONAL", "Professional"),
         ("OTHER", "Other"),
     ]
 
@@ -32,6 +38,15 @@ class Community(models.Model):
         max_length=10,
         choices=VISIBILITY_CHOICES,
         default="public",
+    )
+    JOIN_POLICY_CHOICES = [
+        ("open", "Open to all"),
+        ("approval", "Requires approval"),
+    ]
+    join_policy = models.CharField(
+        max_length=10,
+        choices=JOIN_POLICY_CHOICES,
+        default="open",
     )
     profile_image = CloudinaryField(
         "profile image",

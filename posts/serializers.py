@@ -46,6 +46,7 @@ class PostImageSerializer(serializers.ModelSerializer):
 
 
 class PostSerializer(VoteSummarySerializerMixin, serializers.ModelSerializer):
+    content = serializers.CharField(trim_whitespace=False)
     author = UserSerializer(read_only=True)
     comment_count = serializers.IntegerField(source="comments.count", read_only=True)
     accepted_answer = serializers.PrimaryKeyRelatedField(read_only=True)
@@ -110,6 +111,7 @@ class PostSerializer(VoteSummarySerializerMixin, serializers.ModelSerializer):
 
 
 class CommentSerializer(VoteSummarySerializerMixin, serializers.ModelSerializer):
+    content = serializers.CharField(trim_whitespace=False)
     author = UserSerializer(read_only=True)
     replies = serializers.SerializerMethodField()
     is_accepted_answer = serializers.SerializerMethodField()
@@ -148,6 +150,7 @@ class CommentSerializer(VoteSummarySerializerMixin, serializers.ModelSerializer)
 
 
 class ReplySerializer(VoteSummarySerializerMixin, serializers.ModelSerializer):
+    content = serializers.CharField(trim_whitespace=False)
     author = UserSerializer(read_only=True)
     replies = serializers.SerializerMethodField()
     upvotes = serializers.SerializerMethodField()

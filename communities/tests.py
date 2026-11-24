@@ -69,6 +69,137 @@ class CommunityRulesApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["country"], "Kenya")
 
+    def test_multiline_community_description_is_preserved_on_create_and_update(self):
+        description = "\nFirst paragraph.\n\nSecond paragraph.\n"
+        response = self.client.post(
+            reverse("community-list"),
+            {
+                "name": "Multiline description",
+                "community_url": "c/multiline-description",
+                "description": description,
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        community = Community.objects.get(community_url="c/multiline-description")
+        self.assertEqual(community.description, description)
+        self.assertEqual(response.data["description"], description)
+
+        updated_description = "Updated first paragraph.\n\nUpdated second paragraph."
+        response = self.client.patch(
+            reverse("community-detail", args=["multiline-description"]),
+            {"description": updated_description},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        community.refresh_from_db()
+        self.assertEqual(community.description, updated_description)
+        self.assertEqual(response.data["description"], updated_description)
+        self.assertEqual(
+            self.client.get(
+                reverse("community-detail", args=["multiline-description"])
+            ).data["description"],
+            updated_description,
+        )
+
+    def test_public_community_can_require_approval_to_join(self):
+        response = self.client.post(
+            reverse("community-list"),
+            {
+                "name": "Reviewed community",
+                "community_url": "c/reviewed-community",
+                "description": "Membership is reviewed.",
+                "visibility": "public",
+                "join_policy": "approval",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["visibility"], "public")
+        self.assertEqual(response.data["join_policy"], "approval")
+
+        member = User.objects.create_user(username="approval-member")
+        self.client.force_authenticate(user=member)
+        join_response = self.client.post(
+            reverse("community-join", args=["reviewed-community"]),
+            format="json",
+        )
+
+        self.assertEqual(join_response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(join_response.data["status"], "pending")
+        community = Community.objects.get(community_url="c/reviewed-community")
+        self.assertFalse(community.members.filter(pk=member.pk).exists())
+
+    def test_private_community_defaults_to_approval_for_legacy_clients(self):
+        response = self.client.post(
+            reverse("community-list"),
+            {
+                "name": "Private community",
+                "community_url": "c/private-community",
+                "description": "Members only.",
+                "visibility": "private",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["visibility"], "private")
+        self.assertEqual(response.data["join_policy"], "approval")
+
+    def test_updating_to_private_defaults_to_approval_for_legacy_clients(self):
+        community = Community.objects.create(
+            name="Public community",
+            community_url="c/public-community",
+            description="Changing its visibility.",
+            owner=self.user,
+        )
+
+        response = self.client.patch(
+            reverse("community-detail", args=["public-community"]),
+            {"visibility": "private"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["visibility"], "private")
+        self.assertEqual(response.data["join_policy"], "approval")
+        community.refresh_from_db()
+        self.assertEqual(community.join_policy, "approval")
+
+    def test_private_community_cannot_allow_open_joining(self):
+        response = self.client.post(
+            reverse("community-list"),
+            {
+                "name": "Invalid private community",
+                "community_url": "c/invalid-private-community",
+                "description": "Private membership must be approved.",
+                "visibility": "private",
+                "join_policy": "open",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("join_policy", response.data)
+
+    def test_create_community_accepts_distinct_categories(self):
+        for category in ("SPORTS", "NEWS", "CULTURE", "BUSINESS", "ENTERTAINMENT", "LIFESTYLE"):
+            with self.subTest(category=category):
+                response = self.client.post(
+                    reverse("community-list"),
+                    {
+                        "name": f"{category.title()} community",
+                        "community_url": f"c/{category.lower()}-community",
+                        "description": "A community with its own category.",
+                        "category": category,
+                    },
+                    format="json",
+                )
+
+                self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+                self.assertEqual(response.data["category"], category)
+
     def test_community_country_is_optional(self):
         response = self.client.post(
             reverse("community-list"),

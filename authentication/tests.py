@@ -13,7 +13,8 @@ from communities.models import Community
 from posts.models import Comment, Post
 from communities.serializers import UserSerializer
 from .auth import DevelopmentUserAuthentication
-from .models import OAuthLoginCode
+from .models import Follow, OAuthLoginCode
+from .usernames import generate_unique_username, is_generated_username
 
 
 class EmailAuthenticationTests(TestCase):
@@ -31,28 +32,38 @@ class EmailAuthenticationTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         user = User.objects.get(email="person@example.com")
         self.assertTrue(user.check_password("Uganda-Community-2026!"))
-        self.assertRegex(user.profile.username, r"^[a-z]+_[a-z]+_\d{4}$")
+        self.assertRegex(user.profile.username, r"^[a-z]+_[a-z]+(?:_\d+)?$")
         self.assertEqual(response.data["username"], user.profile.username)
+        self.assertEqual(user.username, user.profile.username)
         self.assertFalse(EmailAddress.objects.get(user=user).verified)
         self.assertIn("verify your account", response.data["detail"])
         send_confirmation.assert_called_once()
 
-    def test_signup_username_does_not_depend_on_email_and_is_unique(self):
-        with patch("authentication.usernames.secrets.randbelow", side_effect=[0, 1]):
-            first = self.client.post(
-                "/api/auth/signup/",
-                {"email": "same@example.com", "password": "Uganda-Community-2026!"},
-                format="json",
-            )
-            second = self.client.post(
-                "/api/auth/signup/",
-                {"email": "different@example.com", "password": "Uganda-Community-2026!"},
-                format="json",
-            )
+    def test_username_generator_prefers_name_without_number(self):
+        with patch(
+            "authentication.usernames.secrets.choice",
+            side_effect=["zuri", "nile"],
+        ):
+            username = generate_unique_username()
 
-        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(second.status_code, status.HTTP_201_CREATED)
-        self.assertNotEqual(first.data["username"], second.data["username"])
+        self.assertEqual(username, "zuri_nile")
+        self.assertTrue(is_generated_username(username))
+
+    def test_username_generator_adds_suffix_when_name_is_taken(self):
+        user = User.objects.create_user(username="test-owner")
+        user.username = "zuri_nile"
+        user.save(update_fields=["username"])
+        user.profile.username = "zuri_nile"
+        user.profile.save(update_fields=["username"])
+
+        with patch(
+            "authentication.usernames.secrets.choice",
+            side_effect=["zuri", "nile"],
+        ):
+            username = generate_unique_username()
+
+        self.assertEqual(username, "zuri_nile_2")
+        self.assertTrue(is_generated_username(username))
 
     def test_current_user_can_update_public_username_case_insensitively(self):
         user = User.objects.create_user(username="original-username")
@@ -73,7 +84,7 @@ class EmailAuthenticationTests(TestCase):
         self.assertEqual(serialized_user["username"], "new_handle")
         self.assertEqual(
             set(serialized_user),
-            {"id", "username", "email", "first_name", "last_name"},
+            {"id", "username"},
         )
 
     def test_current_user_rejects_an_existing_username_case_insensitively(self):
@@ -92,6 +103,38 @@ class EmailAuthenticationTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("username", response.data)
+
+    def test_current_user_can_update_profile_details_and_visibility(self):
+        user = User.objects.create_user(username="profile-settings")
+        client = APIClient()
+        client.force_authenticate(user=user)
+        bio = "First paragraph.\n\nSecond paragraph."
+
+        response = client.patch(
+            "/api/auth/me/",
+            {
+                "display_name": "A Profile Name",
+                "avatar": "https://example.com/avatar.png",
+                "bio": bio,
+                "location": "Kampala, Uganda",
+                "website": "https://example.com",
+                "activity_visibility": "hidden",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["display_name"], "A Profile Name")
+        self.assertEqual(response.data["avatar"], "https://example.com/avatar.png")
+        self.assertEqual(response.data["bio"], bio)
+        self.assertEqual(response.data["location"], "Kampala, Uganda")
+        self.assertEqual(response.data["website"], "https://example.com")
+        self.assertEqual(response.data["activity_visibility"], "hidden")
+        user.profile.refresh_from_db()
+        self.assertEqual(user.profile.bio, bio)
+
+        get_response = client.get("/api/auth/me/")
+        self.assertEqual(get_response.data, response.data)
 
     def test_login_requires_verified_email(self):
         user = User.objects.create_user(
@@ -250,6 +293,9 @@ class EmailAuthenticationTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_302_FOUND)
         self.assertIn("http://localhost:3000/auth/callback?code=", response["Location"])
         self.assertEqual(OAuthLoginCode.objects.filter(user=user).count(), 1)
+        user.refresh_from_db()
+        self.assertRegex(user.username, r"^[a-z]+_[a-z]+(?:_\d+)?$")
+        self.assertEqual(user.username, user.profile.username)
 
 
 class PublicProfileApiTests(TestCase):
@@ -295,11 +341,21 @@ class PublicProfileApiTests(TestCase):
         )
 
     def test_profile_endpoint_returns_user_and_only_public_activity(self):
-        response = self.client.get("/api/profiles/profile_owner/")
+        username = self.profile_user.profile.username
+        response = self.client.get(f"/api/profiles/{username}/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["user"]["id"], self.profile_user.pk)
-        self.assertEqual(response.data["user"]["username"], "profile_owner")
+        self.assertEqual(response.data["user"]["username"], username)
+        self.assertNotIn("first_name", response.data["user"])
+        self.assertNotIn("last_name", response.data["user"])
+        self.assertNotIn("email", response.data["user"])
+        for public_user in (
+            response.data["posts"][0]["author"],
+            response.data["comments"][0]["author"],
+            response.data["communities"][0]["owner"],
+        ):
+            self.assertEqual(set(public_user), {"id", "username"})
         self.assertEqual(
             [post["title"] for post in response.data["posts"]],
             ["A public profile post"],
@@ -314,9 +370,62 @@ class PublicProfileApiTests(TestCase):
         )
 
     def test_profile_endpoint_is_public_and_username_case_insensitive(self):
-        response = self.client.get("/api/profiles/PROFILE_OWNER/")
+        username = self.profile_user.profile.username.upper()
+        response = self.client.get(f"/api/profiles/{username}/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_follow_and_unfollow_are_immediate_idempotent_and_counted(self):
+        follower = User.objects.create_user(username="profile-follower")
+        client = APIClient()
+        client.force_authenticate(user=follower)
+        url = f"/api/profiles/{self.profile_user.profile.username}/follow/"
+
+        response = client.post(url, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["following"])
+        self.assertEqual(response.data["followers_count"], 1)
+        self.assertEqual(Follow.objects.count(), 1)
+
+        response = client.post(url, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(Follow.objects.count(), 1)
+
+        profile_response = client.get(f"/api/profiles/{self.profile_user.profile.username}/")
+        self.assertTrue(profile_response.data["user"]["is_following"])
+        self.assertEqual(profile_response.data["user"]["followers_count"], 1)
+
+        response = client.delete(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data["following"])
+        self.assertEqual(response.data["followers_count"], 0)
+        self.assertFalse(Follow.objects.exists())
+
+    def test_follow_requires_authentication_and_rejects_self_follow(self):
+        url = f"/api/profiles/{self.profile_user.profile.username}/follow/"
+        self.assertEqual(self.client.post(url).status_code, status.HTTP_401_UNAUTHORIZED)
+
+        client = APIClient()
+        client.force_authenticate(user=self.profile_user)
+        response = client.post(url, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(Follow.objects.exists())
+
+    def test_hidden_profile_activity_is_private_but_visible_to_owner(self):
+        self.profile_user.profile.activity_visibility = "hidden"
+        self.profile_user.profile.save(update_fields=["activity_visibility"])
+        username = self.profile_user.profile.username
+
+        public_response = APIClient().get(f"/api/profiles/{username}/")
+        self.assertEqual(public_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(public_response.data["posts"], [])
+        self.assertEqual(public_response.data["comments"], [])
+
+        owner_client = APIClient()
+        owner_client.force_authenticate(user=self.profile_user)
+        owner_response = owner_client.get(f"/api/profiles/{username}/")
+        self.assertEqual(len(owner_response.data["posts"]), 1)
+        self.assertEqual(len(owner_response.data["comments"]), 1)
 
     def test_profile_endpoint_returns_404_for_unknown_username(self):
         response = self.client.get("/api/profiles/does-not-exist/")

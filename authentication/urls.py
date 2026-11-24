@@ -1,6 +1,7 @@
 from django.urls import path
 from .views import (
     CurrentUserView,
+    FollowView,
     GoogleLoginCompleteView,
     GoogleTokenExchangeView,
     LoginView,
@@ -15,6 +16,7 @@ urlpatterns = [
     path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
     path('auth/me/', CurrentUserView.as_view(), name='auth-me'),
     path('profiles/<str:username>/', PublicProfileView.as_view(), name='public-profile'),
+    path('profiles/<str:username>/follow/', FollowView.as_view(), name='profile-follow'),
     path('auth/google/complete/', GoogleLoginCompleteView.as_view(), name='auth-google-complete'),
     path('auth/google/exchange/', GoogleTokenExchangeView.as_view(), name='auth-google-exchange'),
 ]

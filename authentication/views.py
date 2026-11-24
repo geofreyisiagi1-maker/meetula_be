@@ -22,7 +22,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import OAuthLoginCode, UserProfile
+from .models import Follow, OAuthLoginCode, UserProfile
 from .usernames import generate_unique_username
 from communities.models import Community
 from communities.serializers import CommunitySerializer
@@ -81,13 +81,52 @@ class UsernameUpdateSerializer(serializers.Serializer):
         return username
 
 
+class ProfileUpdateSerializer(serializers.Serializer):
+    display_name = serializers.CharField(
+        max_length=80,
+        required=False,
+        allow_blank=True,
+        trim_whitespace=False,
+    )
+    avatar = serializers.CharField(
+        source="avatar_url",
+        max_length=2048,
+        required=False,
+        allow_blank=True,
+        trim_whitespace=False,
+    )
+    bio = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
+    location = serializers.CharField(
+        max_length=100,
+        required=False,
+        allow_blank=True,
+        trim_whitespace=False,
+    )
+    website = serializers.URLField(
+        max_length=2048,
+        required=False,
+        allow_blank=True,
+    )
+    activity_visibility = serializers.ChoiceField(
+        choices=UserProfile.ACTIVITY_VISIBILITY_CHOICES,
+        required=False,
+    )
+
+
 def user_data(user):
+    profile = user.profile
     return {
         "id": user.pk,
-        "username": user.profile.username,
+        "username": profile.username,
         "email": user.email,
         "first_name": user.first_name,
         "last_name": user.last_name,
+        "display_name": profile.display_name or user.get_full_name() or profile.username,
+        "avatar": profile.avatar_url or "/meetula-default-avatar.png",
+        "bio": profile.bio,
+        "location": profile.location,
+        "website": profile.website,
+        "activity_visibility": profile.activity_visibility,
     }
 
 
@@ -156,23 +195,31 @@ class CurrentUserView(APIView):
         return Response(user_data(request.user))
 
     def patch(self, request):
-        serializer = UsernameUpdateSerializer(
-            data=request.data,
-            context={"request": request},
-        )
-        serializer.is_valid(raise_exception=True)
         profile = request.user.profile
-        username = serializer.validated_data["username"]
-        try:
-            with transaction.atomic():
-                profile.username = username
-                profile.save(update_fields=["username"])
-                request.user.username = username
-                request.user.save(update_fields=["username"])
-        except IntegrityError as exc:
-            raise serializers.ValidationError({
-                "username": "This username is already taken.",
-            }) from exc
+        if "username" in request.data:
+            serializer = UsernameUpdateSerializer(
+                data=request.data,
+                context={"request": request},
+            )
+            serializer.is_valid(raise_exception=True)
+            username = serializer.validated_data["username"]
+            try:
+                with transaction.atomic():
+                    profile.username = username
+                    profile.save(update_fields=["username"])
+                    request.user.username = username
+                    request.user.save(update_fields=["username"])
+            except IntegrityError as exc:
+                raise serializers.ValidationError({
+                    "username": "This username is already taken.",
+                }) from exc
+        else:
+            serializer = ProfileUpdateSerializer(data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            for field, value in serializer.validated_data.items():
+                setattr(profile, field, value)
+            if serializer.validated_data:
+                profile.save(update_fields=list(serializer.validated_data))
         return Response(user_data(request.user))
 
 
@@ -186,20 +233,30 @@ class PublicProfileView(APIView):
         if profile_user is None:
             raise Http404("Profile not found.")
 
-        posts = Post.objects.filter(
-            author=profile_user,
-            community__visibility="public",
-        ).select_related("author", "community").prefetch_related("images", "comments__replies")
-        comments = Comment.objects.filter(
-            author=profile_user,
-            post__community__visibility="public",
-        ).select_related("author", "post", "post__community").prefetch_related("replies")
+        is_owner = request.user.is_authenticated and request.user.pk == profile_user.pk
+        can_view_activity = is_owner or profile_user.profile.activity_visibility == "public"
+        posts = Post.objects.none()
+        comments = Comment.objects.none()
+        if can_view_activity:
+            posts = Post.objects.filter(
+                author=profile_user,
+                community__visibility="public",
+            ).select_related("author", "community").prefetch_related("images", "comments__replies")
+            comments = Comment.objects.filter(
+                author=profile_user,
+                post__community__visibility="public",
+            ).select_related("author", "post", "post__community").prefetch_related("replies")
+        community_activity = Q()
+        if can_view_activity:
+            community_activity = (
+                Q(posts__author=profile_user)
+                | Q(posts__comments__author=profile_user)
+            )
         communities = Community.objects.filter(visibility="public").filter(
             Q(owner=profile_user)
             | Q(members=profile_user)
             | Q(moderators=profile_user)
-            | Q(posts__author=profile_user)
-            | Q(posts__comments__author=profile_user)
+            | community_activity
         ).select_related("owner").prefetch_related("members", "moderators").distinct()
 
         serialized_comments = CommentSerializer(
@@ -215,9 +272,22 @@ class PublicProfileView(APIView):
             "user": {
                 "id": profile_user.pk,
                 "username": profile_user.profile.username,
-                "first_name": profile_user.first_name,
-                "last_name": profile_user.last_name,
                 "date_joined": profile_user.date_joined,
+                "display_name": profile_user.profile.display_name or profile_user.get_full_name() or profile_user.profile.username,
+                "avatar": profile_user.profile.avatar_url or "/meetula-default-avatar.png",
+                "bio": profile_user.profile.bio,
+                "location": profile_user.profile.location,
+                "website": profile_user.profile.website,
+                "activity_visibility": profile_user.profile.activity_visibility,
+                "followers_count": profile_user.follower_relationships.count(),
+                "following_count": profile_user.following_relationships.count(),
+                "is_following": (
+                    request.user.is_authenticated
+                    and Follow.objects.filter(
+                        follower=request.user,
+                        following=profile_user,
+                    ).exists()
+                ),
             },
             "posts": PostSerializer(
                 posts,
@@ -230,6 +300,36 @@ class PublicProfileView(APIView):
                 many=True,
                 context={"request": request},
             ).data,
+        })
+
+
+class FollowView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_target_user(self, username):
+        target = User.objects.filter(profile__username__iexact=username).first()
+        if target is None:
+            raise Http404("Profile not found.")
+        if target.pk == self.request.user.pk:
+            raise serializers.ValidationError({"detail": "You cannot follow yourself."})
+        return target
+
+    def post(self, request, username):
+        target = self.get_target_user(username)
+        Follow.objects.get_or_create(follower=request.user, following=target)
+        return self.response_for(target, following=True)
+
+    def delete(self, request, username):
+        target = self.get_target_user(username)
+        Follow.objects.filter(follower=request.user, following=target).delete()
+        return self.response_for(target, following=False)
+
+    @staticmethod
+    def response_for(target, following):
+        return Response({
+            "following": following,
+            "followers_count": target.follower_relationships.count(),
+            "following_count": target.following_relationships.count(),
         })
 
 

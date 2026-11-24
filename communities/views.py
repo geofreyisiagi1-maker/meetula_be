@@ -85,7 +85,7 @@ class CommunityViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if community.visibility == "private":
+        if community.join_policy == "approval":
             join_request, created = CommunityJoinRequest.objects.get_or_create(
                 community=community,
                 user=user,
