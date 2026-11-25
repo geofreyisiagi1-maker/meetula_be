@@ -4,7 +4,6 @@ from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.db.models import Q
 from django.utils.text import slugify
-from cloudinary.models import CloudinaryField
 
 
 class Post(models.Model):
@@ -64,7 +63,7 @@ class Post(models.Model):
 
 class PostImage(models.Model):
     post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="images")
-    image = CloudinaryField("image", folder="posts")
+    image = models.ImageField("image", upload_to="posts/", max_length=512)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -83,7 +82,13 @@ class Comment(models.Model):
     )
     votes = GenericRelation("posts.Vote", related_query_name="comment")
     content = models.TextField()
-    image = CloudinaryField("image", folder="comments", blank=True, null=True)
+    image = models.ImageField(
+        "image",
+        upload_to="comments/",
+        blank=True,
+        null=True,
+        max_length=512,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -114,7 +119,13 @@ class Reply(models.Model):
     )
     votes = GenericRelation("posts.Vote", related_query_name="reply")
     content = models.TextField()
-    image = CloudinaryField("image", folder="replies", blank=True, null=True)
+    image = models.ImageField(
+        "image",
+        upload_to="replies/",
+        blank=True,
+        null=True,
+        max_length=512,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

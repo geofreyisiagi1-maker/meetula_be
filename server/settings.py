@@ -14,6 +14,7 @@ from pathlib import Path
 
 import environ
 from corsheaders.defaults import default_headers
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -239,15 +240,57 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
-import cloudinary
-import cloudinary.uploader
-import cloudinary.api
+R2_ACCESS_KEY_ID = env("R2_ACCESS_KEY_ID", default="")
+R2_SECRET_ACCESS_KEY = env("R2_SECRET_ACCESS_KEY", default="")
+R2_BUCKET_NAME = env("R2_BUCKET_NAME", default="")
+R2_ENDPOINT_URL = env("R2_ENDPOINT_URL", default="")
+R2_PUBLIC_URL = env("R2_PUBLIC_URL", default="")
+CLOUDINARY_CLOUD_NAME = env("CLOUD_NAME", default="")
 
-cloudinary.config(
-    cloud_name=env('CLOUD_NAME', default=''),
-    api_key=env('API_KEY', default=''),
-    api_secret=env('API_SECRET', default='')
-) 
+r2_settings = (
+    R2_ACCESS_KEY_ID,
+    R2_SECRET_ACCESS_KEY,
+    R2_BUCKET_NAME,
+    R2_ENDPOINT_URL,
+    R2_PUBLIC_URL,
+)
+if any(r2_settings) and not all(r2_settings):
+    raise ImproperlyConfigured(
+        "Set R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, "
+        "R2_ENDPOINT_URL, and R2_PUBLIC_URL together."
+    )
+if not DEBUG and not all(r2_settings):
+    raise ImproperlyConfigured(
+        "Configure all Cloudflare R2 settings before running outside DEBUG mode."
+    )
+
+if CLOUDINARY_CLOUD_NAME:
+    import cloudinary
+
+    cloudinary.config(cloud_name=CLOUDINARY_CLOUD_NAME)
+
+STORAGES = {
+    "default": (
+        {
+            "BACKEND": "server.storage.CloudflareR2Storage",
+            "OPTIONS": {
+                "access_key": R2_ACCESS_KEY_ID,
+                "secret_key": R2_SECRET_ACCESS_KEY,
+                "bucket_name": R2_BUCKET_NAME,
+                "endpoint_url": R2_ENDPOINT_URL,
+                "region_name": "auto",
+                "signature_version": "s3v4",
+                "addressing_style": "path",
+                "file_overwrite": False,
+            },
+        }
+        if all(r2_settings)
+        else {"BACKEND": "server.storage.LocalImageStorage"}
+    ),
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field

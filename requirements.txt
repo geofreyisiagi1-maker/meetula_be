@@ -6,6 +6,7 @@ charset-normalizer==3.5.2
 cloudinary==1.44.0
 cryptography==50.0.2
 Django==5.2.19
+django-storages[s3]==1.14.6
 django-allauth==65.22.1
 django-cors-headers==4.4.0
 django-environ==0.11.2

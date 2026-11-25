@@ -1,6 +1,5 @@
 from django.contrib.auth.models import User
 from django.db import models
-from cloudinary.models import CloudinaryField
 
 
 class Community(models.Model):
@@ -48,17 +47,19 @@ class Community(models.Model):
         choices=JOIN_POLICY_CHOICES,
         default="open",
     )
-    profile_image = CloudinaryField(
+    profile_image = models.ImageField(
         "profile image",
-        folder="communities",
+        upload_to="communities/profile/",
         blank=True,
         null=True,
+        max_length=512,
     )
-    cover_image = CloudinaryField(
+    cover_image = models.ImageField(
         "cover image",
-        folder="communities",
+        upload_to="communities/cover/",
         blank=True,
         null=True,
+        max_length=512,
     )
     member_count = models.PositiveIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)

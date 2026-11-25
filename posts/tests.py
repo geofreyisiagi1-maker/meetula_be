@@ -1,5 +1,5 @@
 from django.contrib.auth.models import User
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from types import SimpleNamespace
 from rest_framework import status
@@ -8,7 +8,35 @@ from unittest.mock import Mock, patch
 
 from communities.models import Community
 from communities.serializers import CommunitySerializer
+from server.storage import CloudflareR2Storage, LEGACY_CLOUDINARY_PREFIX
 from .models import Comment, Post, Reply
+
+
+class CloudflareR2StorageTests(TestCase):
+    @override_settings(R2_PUBLIC_URL="https://images.example.com")
+    def test_r2_urls_use_the_public_bucket_domain(self):
+        storage = CloudflareR2Storage(bucket_name="test-bucket")
+
+        self.assertEqual(
+            storage.url("posts/an image.png"),
+            "https://images.example.com/posts/an%20image.png",
+        )
+
+    @override_settings(CLOUDINARY_CLOUD_NAME="legacy-cloud")
+    @patch(
+        "cloudinary.utils.cloudinary_url",
+        return_value=("https://res.cloudinary.com/legacy-cloud/image/upload/old.png", {}),
+    )
+    def test_legacy_cloudinary_images_keep_their_urls(self, cloudinary_url):
+        storage = CloudflareR2Storage(bucket_name="test-bucket")
+
+        url = storage.url(f"{LEGACY_CLOUDINARY_PREFIX}communities/old.png")
+
+        self.assertEqual(
+            url,
+            "https://res.cloudinary.com/legacy-cloud/image/upload/old.png",
+        )
+        cloudinary_url.assert_called_once_with("communities/old.png")
 
 
 class PostApiTests(TestCase):
@@ -470,7 +498,10 @@ class PostApiTests(TestCase):
     def test_community_model_stores_profile_and_cover_images(self, create_community):
         profile_image = object()
         cover_image = object()
-        created_community = SimpleNamespace(members=SimpleNamespace(add=Mock()))
+        created_community = SimpleNamespace(
+            members=SimpleNamespace(add=Mock()),
+            moderators=SimpleNamespace(add=Mock()),
+        )
         create_community.return_value = created_community
         serializer = CommunitySerializer(
             context={"request": SimpleNamespace(user=self.user)}
@@ -657,9 +688,10 @@ class PostApiTests(TestCase):
             format="json",
         )
         self.assertEqual(comment_response.status_code, status.HTTP_201_CREATED)
+        self.assertIsNone(comment_response.data["image"])
         comment = Comment.objects.get()
         self.assertEqual(comment.author, self.user)
-        self.assertIsNone(comment.image)
+        self.assertFalse(comment.image)
 
         reply_response = self.client.post(
             reverse("reply-list"),
@@ -667,9 +699,10 @@ class PostApiTests(TestCase):
             format="json",
         )
         self.assertEqual(reply_response.status_code, status.HTTP_201_CREATED)
+        self.assertIsNone(reply_response.data["image"])
         reply = Reply.objects.get()
         self.assertEqual(reply.author, self.user)
-        self.assertIsNone(reply.image)
+        self.assertFalse(reply.image)
 
     def test_nested_replies_and_votes_work(self):
         post = Post.objects.create(

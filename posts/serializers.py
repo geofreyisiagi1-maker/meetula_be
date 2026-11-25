@@ -1,4 +1,3 @@
-from django.conf import settings
 from rest_framework import serializers
 
 from communities.serializers import UserSerializer
@@ -39,10 +38,11 @@ class PostImageSerializer(serializers.ModelSerializer):
     def get_image(self, obj):
         if not obj.image:
             return None
+        image_url = obj.image.url
         request = self.context.get("request")
         if request is not None:
-            return request.build_absolute_uri(obj.image.url)
-        return f"{settings.MEDIA_URL}{obj.image}"
+            return request.build_absolute_uri(image_url)
+        return image_url
 
 
 class PostSerializer(VoteSummarySerializerMixin, serializers.ModelSerializer):
