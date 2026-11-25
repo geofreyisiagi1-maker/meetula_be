@@ -82,12 +82,6 @@ class UsernameUpdateSerializer(serializers.Serializer):
 
 
 class ProfileUpdateSerializer(serializers.Serializer):
-    display_name = serializers.CharField(
-        max_length=80,
-        required=False,
-        allow_blank=True,
-        trim_whitespace=False,
-    )
     avatar = serializers.CharField(
         source="avatar_url",
         max_length=2048,
@@ -121,7 +115,7 @@ def user_data(user):
         "email": user.email,
         "first_name": user.first_name,
         "last_name": user.last_name,
-        "display_name": profile.display_name or user.get_full_name() or profile.username,
+        "display_name": profile.username,
         "avatar": profile.avatar_url or "/meetula-default-avatar.png",
         "bio": profile.bio,
         "location": profile.location,
@@ -273,7 +267,7 @@ class PublicProfileView(APIView):
                 "id": profile_user.pk,
                 "username": profile_user.profile.username,
                 "date_joined": profile_user.date_joined,
-                "display_name": profile_user.profile.display_name or profile_user.get_full_name() or profile_user.profile.username,
+                "display_name": profile_user.profile.username,
                 "avatar": profile_user.profile.avatar_url or "/meetula-default-avatar.png",
                 "bio": profile_user.profile.bio,
                 "location": profile_user.profile.location,

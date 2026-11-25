@@ -106,6 +106,8 @@ class EmailAuthenticationTests(TestCase):
 
     def test_current_user_can_update_profile_details_and_visibility(self):
         user = User.objects.create_user(username="profile-settings")
+        user.profile.display_name = "A Private Real Name"
+        user.profile.save(update_fields=["display_name"])
         client = APIClient()
         client.force_authenticate(user=user)
         bio = "First paragraph.\n\nSecond paragraph."
@@ -113,7 +115,6 @@ class EmailAuthenticationTests(TestCase):
         response = client.patch(
             "/api/auth/me/",
             {
-                "display_name": "A Profile Name",
                 "avatar": "https://example.com/avatar.png",
                 "bio": bio,
                 "location": "Kampala, Uganda",
@@ -124,7 +125,8 @@ class EmailAuthenticationTests(TestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["display_name"], "A Profile Name")
+        self.assertEqual(response.data["display_name"], user.profile.username)
+        self.assertNotEqual(response.data["display_name"], user.profile.display_name)
         self.assertEqual(response.data["avatar"], "https://example.com/avatar.png")
         self.assertEqual(response.data["bio"], bio)
         self.assertEqual(response.data["location"], "Kampala, Uganda")
@@ -347,6 +349,7 @@ class PublicProfileApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["user"]["id"], self.profile_user.pk)
         self.assertEqual(response.data["user"]["username"], username)
+        self.assertEqual(response.data["user"]["display_name"], username)
         self.assertNotIn("first_name", response.data["user"])
         self.assertNotIn("last_name", response.data["user"])
         self.assertNotIn("email", response.data["user"])
